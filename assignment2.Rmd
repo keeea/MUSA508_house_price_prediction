@@ -15,7 +15,7 @@ knitr::opts_chunk$set(echo = TRUE)
 setwd("/Users/lexi/Desktop/UPENN_COURSE/MUSA_508/assignment/assignment2")
 
 # for Austin
-#setwd("")
+setwd("C:/Users/austi/Desktop/Penn/Classes/PublicPolicy/Assignments/Midterm")
 ```
 
 
