@@ -1,23 +1,22 @@
 ---
-title: "assignment2"
+title: "MUSA 508, Assignment 2 - Spatial Machine Learning"
+author: "Austin, Lan"
 output: html_document
 ---
 
 ```{r setup, include=FALSE}
 # You can set some global options for knitting chunks
-
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
 **please choose and run this this chunk first everytime**
 ```{r set working directory}
 # for Lan
-setwd("/Users/lexi/Desktop/UPENN_COURSE/MUSA_508/assignment/assignment2")
+#setwd("/Users/lexi/Desktop/UPENN_COURSE/MUSA_508/assignment/assignment2")
 
 # for Austin
 setwd("C:/Users/austi/Desktop/Penn/Classes/PublicPolicy/Assignments/Midterm")
 ```
-
 
 ```{r setup}
 # Load some libraries
@@ -47,6 +46,21 @@ palette3 <- c('#f2d6a2', '#e9d596', '#dfd38a', '#d6d17e', '#ccce72', '#c2cb66', 
 ```
 
 
+# Data Wrangling
+
+## Data Loading and Cleaning
+
+**loading data and transforming in to 'ESRI:102254'**
+
+**(glimpsing with mapview / simply plot)**
+
+**removing error data and trimming data into county limits**
+two ways to trim, select from "county" column, or use geometry
+
+**(selecting a specific subset)**
+sometimes need sometimes not, decisions will be made depending on group summary
+
+
 ```{r load physical characteristic data}
 physical_data <- st_read("data/studentData.geojson") %>% 
   st_set_crs('ESRI:102254')
@@ -62,10 +76,29 @@ city_boundary <- st_read("https://opendata.arcgis.com/datasets/955e7a0f52474b60a
 mapview(city_boundary)
 ```
 
-```{r pct sales within city}
-city_phy_data <- physical_data[city_boundary,]
-mapview(city_phy_data)
-proportion <- nrow(distinct(city_phy_data))/nrow(distinct(physical_data))
-```
+## Feature Engineering
+
+**sum within census track** 
+(least optional for most situation)
+
+**sum within fixed buffer**
+(assuming scale relationship uniform countywide)
+
+**average distance of k-nearest case**
+
+
+## Exploratory Analysis
+
+# Regression
+
+# Cross-Validation
+
+
+
+
+
+
+
+
 
 
