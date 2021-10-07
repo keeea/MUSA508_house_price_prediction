@@ -1,0 +1,71 @@
+---
+title: "assignment2"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# You can set some global options for knitting chunks
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**please choose and run this this chunk first everytime**
+```{r set working directory}
+# for Lan
+setwd("/Users/lexi/Desktop/UPENN_COURSE/MUSA_508/assignment/assignment2")
+
+# for Austin
+#setwd("")
+```
+
+
+```{r setup}
+# Load some libraries
+library(tidyverse)
+library(sf)
+library(spdep)
+library(caret)
+library(ckanr)
+library(FNN)
+library(grid)
+library(gridExtra)
+library(ggcorrplot)
+library(kableExtra)
+library(jtools)     # for regression model plots
+library(ggstance) # to support jtools plots
+library(mapview)
+
+# functions and data directory
+root.dir = "https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/"
+source("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/functions.r")
+
+# color set up
+# yellow to green
+palette1 <- c('#f2d6a2', '#dfd688', '#ccd270', '#b8ca58', '#a4bf41')  # lighter one
+palette2 <- c('#ffd358', '#e1cf5b', '#b9bc4e', '#879a32', '#4f6d00')   # stronger one
+palette3 <- c('#f2d6a2', '#e9d596', '#dfd38a', '#d6d17e', '#ccce72', '#c2cb66', '#b8c85a', '#aec44d', '#a4bf41')  # lighter one with more gradient
+```
+
+
+```{r load physical characteristic data}
+physical_data <- st_read("data/studentData.geojson") %>% 
+  st_set_crs('ESRI:102254')
+st_crs(physical_data)
+mapview(physical_data)
+```
+
+```{r load city boundary data}
+city_boundary <- st_read("https://opendata.arcgis.com/datasets/955e7a0f52474b60a9866950daf10acb_0.geojson") %>% 
+  st_transform('ESRI:102254') %>% 
+  st_union() %>% 
+  st_sf()
+mapview(city_boundary)
+```
+
+```{r pct sales within city}
+city_phy_data <- physical_data[city_boundary,]
+mapview(city_phy_data)
+proportion <- nrow(distinct(city_phy_data))/nrow(distinct(physical_data))
+```
+
+
