@@ -64,8 +64,6 @@ load property-information data
 ```{r load physical characteristic data}
 physical_data <- st_read("data/studentData.geojson") %>% 
   st_set_crs('ESRI:102254')
-
-mapview(physical_data)
 ```
 load Boulder city boundary
 ```{r load city boundary data}
@@ -74,15 +72,50 @@ city_boundary <- st_read("https://opendata.arcgis.com/datasets/955e7a0f52474b60a
   st_union() %>% 
   st_buffer(1) %>%
   st_sf()
-
-mapview(city_boundary)
 ```
 load Boulder county boundary
 ```{r load county boundary data}
 county_boundary <- st_read("https://opendata.arcgis.com/datasets/964b8f3b3dbe401bb28d49ac93d29dc4_0.geojson") %>% 
   st_transform('ESRI:102254') 
-#mapview(county_boundary)
 ```
+load and clean school attendance area data
+```{r load school attendance area data}
+# load elementaarea.elementaryry attendance are data - BVSD school district 
+area.elementary <- st_read("data/BVSD_elmtr_area.geojson") %>% 
+  st_transform('ESRI:102254') 
+area.elementary$SchName <- toupper(area.elementary$SchName)
+
+# trim within Boulder
+area.elementary <- area.elementary[county_boundary,] %>% 
+    dplyr::select(SchName)
+
+# load high school attendance are data - BVSD District 
+area.high <- st_read("data/BVSD_hsc_area.geojson") %>% 
+  st_transform('ESRI:102254') %>% 
+  dplyr::select(SchName, FID)
+area.high$SchName <- toupper(area.high$SchName)
+
+# merge FID 1&2
+# only FID 1
+area.FID1 <- st_union(
+  area.high %>% 
+    filter(FID == "1"),
+  area.high %>% 
+    filter(FID == "2")
+) %>% 
+  dplyr::select(SchName)
+# rbind FID 1 back
+area.high <- rbind(
+  area.FID1,
+  area.high %>% 
+    dplyr::filter(FID != "2", FID != "1") %>% 
+    dplyr::select(SchName)
+) 
+
+# trim within Boulder
+area.high <- area.high[county_boundary,] 
+```
+
 load school data 
 ```{r load school data, message=FALSE}
 # load 
@@ -92,20 +125,56 @@ schools <- st_read("data/Public_Schools.geojson") %>%
 trim schools to those within Boulder county and select schools are operational and regular
 ```{r schools trim within Boulder}
 # trim within Boulder
-schools <- schools[county_boundary,] %>% 
-  dplyr::filter(COUNTY == 'BOULDER') %>% 
-  # select regular schools
-  dplyr::filter(TYPE == "1") %>% 
-  # select operational schools
-  dplyr::filter(STATUS == "1")
-#mapview(schools)
+schools <- rbind(
+  schools %>% 
+    dplyr::filter(NAME == "BROOMFIELD HIGH SCHOOL"), # This school isn't within Boulder, but some Boulder residents should attend it
+  schools[county_boundary,] %>% 
+    dplyr::filter(COUNTY == 'BOULDER') %>% 
+    # select regular schools
+    dplyr::filter(TYPE == "1") %>% 
+    # select operational schools
+    dplyr::filter(STATUS == "1") %>% 
+    dplyr::filter(NAME != "NEW VISTA HIGH SCHOOL")  # This school isn't in school district list
+)
 ```
-select a subset of public school
+summary by school level
 ```{r select a subset of public school}
 schools.summary <- schools %>% 
   group_by(LEVEL_) %>% 
   summarize(count = n(), students = sum(ENROLLMENT))
 schools.summary
+```
+combine schools with attendance areas
+```{r combine schools with attendance areas}
+# select specific school in the attendance list
+school.specific <- rbind(
+  schools[area.elementary,] %>% 
+    dplyr::filter(LEVEL_ == "ELEMENTARY"),
+  schools[area.high,]%>% 
+    dplyr::filter(LEVEL_ == "HIGH")
+)
+```
+load school rating data
+```{r load school rating data}
+# load and filter by district
+school.ratings <- read_csv("data/SPF_Final Ratings_2010-201.csv") %>% 
+  dplyr::filter(DistrictName == "Boulder Valley Re 2")
+
+# transfername to capital
+school.ratings$Name <- toupper(x=school.ratings$Name)
+```
+combine school info with school ratings
+```{r combine school info with school ratings}
+# combine
+school.tidy <- left_join(
+  school.specific, 
+  school.ratings, 
+  by = c("NAME" = "Name")
+)
+
+# select variables
+school.tidy <- school.tidy %>% 
+  dplyr::select(NAME, LEVEL_, Total_Percent_Points)
 ```
 
 load hospital data
@@ -122,8 +191,9 @@ hospitals <- hospitals[county_boundary,] %>%
   #select open hospitals
   dplyr::filter(STATUS == "OPEN") %>% 
   # select GENERAL MEDICAL AND SURGICAL HOSPITALS
-  dplyr::filter(NAICS_DESC == "GENERAL MEDICAL AND SURGICAL HOSPITALS")
-#mapview(hospitals)
+  dplyr::filter(NAICS_DESC == "GENERAL MEDICAL AND SURGICAL HOSPITALS") %>% 
+  # select variables
+  dplyr::select(NAME, CITY, TRAUMA)
 ```
 
 
@@ -136,6 +206,39 @@ hospitals <- hospitals[county_boundary,] %>%
 (assuming scale relationship uniform countywide)
 
 **average distance of k-nearest case**
+combine school data with sale data
+```{r}
+# combine with high school
+sale <- physical_data %>% 
+  st_join(area.high) %>% 
+  st_sf()
+# rename column
+colnames(sale)[49] <- 'high_school'
+
+# combine with elementary school
+sale <- sale %>% 
+  st_join(area.elementary)%>% 
+  st_sf()
+# rename column
+colnames(sale)[50] <- 'elmtr_school'
+
+school.high <- school.tidy %>% 
+  filter(LEVEL_ == "HIGH")
+
+school.high.order <- sale %>% 
+  st_drop_geometry() %>% 
+  left_join(
+    school.high, 
+    by = c("high_school" = "NAME")
+    ) %>% 
+  st_sf()
+
+# add distance to high school
+sale <- sale %>% 
+  dplyr::mutate(
+    hsch_distance = st_distance(sale, school.high, by_element = TRUE)
+  )
+```
 
 
 ## Exploratory Analysis
