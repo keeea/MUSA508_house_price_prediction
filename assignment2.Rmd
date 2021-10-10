@@ -87,12 +87,12 @@ area.elementary$SchName <- toupper(area.elementary$SchName)
 
 # trim within Boulder
 area.elementary <- area.elementary[county_boundary,] %>% 
-    dplyr::select(SchName)
+    dplyr::select(SchName, State_CD)
 
 # load high school attendance are data - BVSD District 
 area.high <- st_read("data/BVSD_hsc_area.geojson") %>% 
   st_transform('ESRI:102254') %>% 
-  dplyr::select(SchName, FID)
+  dplyr::select(SchName, FID, State_CD)
 area.high$SchName <- toupper(area.high$SchName)
 
 # merge FID 1&2
@@ -103,13 +103,13 @@ area.FID1 <- st_union(
   area.high %>% 
     filter(FID == "2")
 ) %>% 
-  dplyr::select(SchName)
+  dplyr::select(SchName, State_CD)
 # rbind FID 1 back
 area.high <- rbind(
   area.FID1,
   area.high %>% 
     dplyr::filter(FID != "2", FID != "1") %>% 
-    dplyr::select(SchName)
+    dplyr::select(SchName, State_CD)
 ) 
 
 # trim within Boulder
@@ -118,9 +118,16 @@ area.high <- area.high[county_boundary,]
 
 load school data 
 ```{r load school data, message=FALSE}
-# load 
+# load school data
 schools <- st_read("data/Public_Schools.geojson") %>% 
   st_transform('ESRI:102254')
+
+# load schoolname comparison table
+school.name <- st_read("data/BVSD_hsc.geojson") %>% 
+  st_transform('ESRI:102254') %>% 
+  dplyr::select(SHNAME, ICSCHNAME, CDEID) %>% 
+  st_drop_geometry()
+school.name$ICSCHNAME <- toupper(school.name$ICSCHNAME)
 ```
 trim schools to those within Boulder county and select schools are operational and regular
 ```{r schools trim within Boulder}
@@ -211,33 +218,52 @@ combine school data with sale data
 # combine with high school
 sale <- physical_data %>% 
   st_join(area.high) %>% 
-  st_sf()
+  st_sf() %>% 
+  left_join(school.name, by = c("State_CD" = "CDEID"))
 # rename column
-colnames(sale)[49] <- 'high_school'
+colnames(sale)[52] <- 'high_school'
 
 # combine with elementary school
 sale <- sale %>% 
   st_join(area.elementary)%>% 
-  st_sf()
+  st_sf()%>% 
+  left_join(school.name, by = c("State_CD.y" = "CDEID"))
 # rename column
-colnames(sale)[50] <- 'elmtr_school'
+colnames(sale)[56] <- 'elmtr_school'
 
-school.high <- school.tidy %>% 
-  filter(LEVEL_ == "HIGH")
-
+# add distance to high school
+# make a df contain school geometry with order
 school.high.order <- sale %>% 
   st_drop_geometry() %>% 
   left_join(
-    school.high, 
+    school.tidy %>% 
+      filter(LEVEL_ == "HIGH"), 
     by = c("high_school" = "NAME")
     ) %>% 
   st_sf()
-
-# add distance to high school
+# caculate distance
 sale <- sale %>% 
   dplyr::mutate(
-    hsch_distance = st_distance(sale, school.high, by_element = TRUE)
+    hsch_distance = st_distance(sale, school.high.order, by_element = TRUE)
   )
+
+# add distance to elementary school
+# make a df contain school geometry with order
+school.elmtr.order <- sale %>% 
+  st_drop_geometry() %>% 
+  left_join(
+    school.tidy %>% 
+      filter(LEVEL_ == "ELEMENTARY"), 
+    by = c("elmtr_school" = "NAME")
+    ) %>% 
+  st_sf()
+# caculate distance
+sale <- sale %>% 
+  dplyr::mutate(
+    elmtr_distance = st_distance(sale, school.elmtr.order, by_element = TRUE)
+  )
+# still have name not match
+#ALICIA SANCHEZ ELEMENTARY SCHOOL
 ```
 
 
