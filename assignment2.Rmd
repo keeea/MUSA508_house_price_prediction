@@ -12,10 +12,10 @@ knitr::opts_chunk$set(echo = TRUE)
 **please choose and run this this chunk first everytime**
 ```{r set working directory}
 # for Lan
-#setwd("/Users/lexi/Desktop/UPENN_COURSE/MUSA_508/assignment/assignment2")
+setwd("/Users/lexi/Desktop/UPENN_COURSE/MUSA_508/assignment/assignment2")
 
 # for Austin
-setwd("C:/Users/austi/Desktop/Penn/Classes/PublicPolicy/Assignments/Midterm")
+#setwd("C:/Users/austi/Desktop/Penn/Classes/PublicPolicy/Assignments/Midterm")
 ```
 
 ```{r setup}
@@ -28,7 +28,7 @@ library(ckanr)
 library(FNN)
 library(grid)
 library(gridExtra)
-library(ggcorrplot)
+#library(ggcorrplot)
 library(kableExtra)
 library(jtools)     # for regression model plots
 library(ggstance) # to support jtools plots
@@ -60,21 +60,72 @@ two ways to trim, select from "county" column, or use geometry
 **(selecting a specific subset)**
 sometimes need sometimes not, decisions will be made depending on group summary
 
-
+load property-information data
 ```{r load physical characteristic data}
 physical_data <- st_read("data/studentData.geojson") %>% 
   st_set_crs('ESRI:102254')
-st_crs(physical_data)
+
 mapview(physical_data)
 ```
-
+load Boulder city boundary
 ```{r load city boundary data}
 city_boundary <- st_read("https://opendata.arcgis.com/datasets/955e7a0f52474b60a9866950daf10acb_0.geojson") %>% 
   st_transform('ESRI:102254') %>% 
   st_union() %>% 
+  st_buffer(1) %>%
   st_sf()
+
 mapview(city_boundary)
 ```
+load Boulder county boundary
+```{r load county boundary data}
+county_boundary <- st_read("https://opendata.arcgis.com/datasets/964b8f3b3dbe401bb28d49ac93d29dc4_0.geojson") %>% 
+  st_transform('ESRI:102254') 
+#mapview(county_boundary)
+```
+load school data 
+```{r load school data, message=FALSE}
+# load 
+schools <- st_read("data/Public_Schools.geojson") %>% 
+  st_transform('ESRI:102254')
+```
+trim schools to those within Boulder county and select schools are operational and regular
+```{r schools trim within Boulder}
+# trim within Boulder
+schools <- schools[county_boundary,] %>% 
+  dplyr::filter(COUNTY == 'BOULDER') %>% 
+  # select regular schools
+  dplyr::filter(TYPE == "1") %>% 
+  # select operational schools
+  dplyr::filter(STATUS == "1")
+#mapview(schools)
+```
+select a subset of public school
+```{r select a subset of public school}
+schools.summary <- schools %>% 
+  group_by(LEVEL_) %>% 
+  summarize(count = n(), students = sum(ENROLLMENT))
+schools.summary
+```
+
+load hospital data
+```{r load hospital data, message=FALSE}
+# load and select field
+hospitals <- st_read("data/hOSPITALS.geojson") %>% 
+  st_transform('ESRI:102254')
+```
+trim hospitals to those within Boulder county and select hospitals are general and open
+```{r hospitals trim within Boulder}
+# trim within Boulder
+hospitals <- hospitals[county_boundary,] %>% 
+  dplyr::filter(COUNTY == 'BOULDER') %>% 
+  #select open hospitals
+  dplyr::filter(STATUS == "OPEN") %>% 
+  # select GENERAL MEDICAL AND SURGICAL HOSPITALS
+  dplyr::filter(NAICS_DESC == "GENERAL MEDICAL AND SURGICAL HOSPITALS")
+#mapview(hospitals)
+```
+
 
 ## Feature Engineering
 
@@ -88,6 +139,8 @@ mapview(city_boundary)
 
 
 ## Exploratory Analysis
+
+**log**
 
 # Regression
 
