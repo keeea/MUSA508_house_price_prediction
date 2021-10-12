@@ -78,6 +78,7 @@ load Boulder county boundary
 county_boundary <- st_read("https://opendata.arcgis.com/datasets/964b8f3b3dbe401bb28d49ac93d29dc4_0.geojson") %>% 
   st_transform('ESRI:102254') 
 ```
+### School
 load and clean school attendance area data
 ```{r load school attendance area data}
 # load elementaryry attendance are data 
@@ -179,17 +180,8 @@ schools <- rbind(
     dplyr::filter(STATUS == "1") %>% 
     dplyr::filter(NAME != "NEW VISTA HIGH SCHOOL")  # This school isn't in school district list
 )
+schools <- schools[st_buffer(county_boundary,10000),]
 ```
-
-combine schools with attendance areas
-{r combine schools with attendance areas}
-# select specific school in the attendance list
-school.specific <- rbind(
-  schools[area.elementary,] %>% 
-    dplyr::filter(LEVEL_ == "ELEMENTARY"),
-  schools[area.high,]%>% 
-    dplyr::filter(LEVEL_ == "HIGH")
-)
 
 load school rating data
 ```{r load school rating data}
@@ -199,20 +191,7 @@ school.ratings <- read_csv("data/SPF_Final Ratings_2010-201.csv")
 # transfername to capital
 school.ratings$Name <- toupper(x=school.ratings$Name)
 ```
-combine school info with school ratings
-{r combine school info with school ratings}
-# combine
-school.tidy <- left_join(
-  school.specific, 
-  school.ratings, 
-  by = c("NAME" = "Name")
-)
-
-# select variables
-school.tidy <- school.tidy %>% 
-  dplyr::select(NAME, LEVEL_, Total_Percent_Points)
-
-
+### Hospital
 load hospital data
 ```{r load hospital data, message=FALSE}
 # load and select field
@@ -239,14 +218,14 @@ school.high <- right_join(
   area.BVSD.high,
   by = c("SchoolNumber" = "State_CD")
 ) %>% 
-  dplyr::select(SchoolNumber, Name, Total_Percent_Points, geometry)
+  dplyr::select(DistrictName, Name, Total_Percent_Points, geometry)
 # join SVV high
 school.high <- rbind(
   right_join(
   school.ratings,
   area.SVV.high,
   by = c("Name" = "SchName"))%>% 
-    dplyr::select(SchoolNumber, Name, Total_Percent_Points, geometry),
+    dplyr::select(DistrictName, Name, Total_Percent_Points, geometry),
   school.high
 )
 # join Estate Park & Thompson high
@@ -255,13 +234,13 @@ school.high <- rbind(
   school.ratings,
   area.other.high,
   by = c("Name" = "schnam"))%>% 
-    dplyr::select(SchoolNumber, Name, Total_Percent_Points, geometry),
+    dplyr::select(DistrictName, Name, Total_Percent_Points, geometry),
   school.high
 )
 # trim within Boulder
 school.high <- st_sf(school.high)
 school.high <- st_intersection(school.high, county_boundary) %>% 
-  dplyr::select(SchoolNumber, Name, Total_Percent_Points, geometry)
+  dplyr::select(DistrictName, Name, Total_Percent_Points, geometry)
 
 # join BVSD elementary
 school.elementary <- right_join(
@@ -269,7 +248,7 @@ school.elementary <- right_join(
   area.BVSD.elementary,
   by = c("SchoolNumber" = "State_CD")
 )%>% 
-    dplyr::select(SchoolNumber, Name, Total_Percent_Points, geometry)
+    dplyr::select(DistrictName, Name, Total_Percent_Points, geometry)
 # join SVV elementary
 school.elementary <- rbind(
   right_join(
@@ -277,7 +256,7 @@ school.elementary <- rbind(
   area.SVV.elementary,
   by = c("Name" = "SchName"))%>% 
     filter(DistrictName == "St Vrain Valley RE1J") %>% 
-    dplyr::select(SchoolNumber, Name, Total_Percent_Points, geometry),
+    dplyr::select(DistrictName, Name, Total_Percent_Points, geometry),
   school.elementary
 )
 # join Estate Park & Thompson elementary
@@ -286,13 +265,13 @@ school.elementary <- rbind(
   school.ratings,
   area.other.elementary,
   by = c("Name" = "schnam"))%>%
-    dplyr::select(SchoolNumber, Name, Total_Percent_Points, geometry),
+    dplyr::select(DistrictName, Name, Total_Percent_Points, geometry),
   school.elementary
 )
 # trim within Boulder
 school.elementary <- st_sf(school.elementary)
 school.elementary <- st_intersection(school.elementary, county_boundary)%>% 
-  dplyr::select(SchoolNumber, Name, Total_Percent_Points, geometry)
+  dplyr::select(DistrictName, Name, Total_Percent_Points, geometry)
 
 ```
 combine school point with school rating data
@@ -305,8 +284,9 @@ school.high.point <- school.high %>%
     by = c("Name" = "NAME")
   ) %>% 
   st_sf() %>% 
-  dplyr::select(Name)
-school.high.point <- school.high.point[st_buffer(county_boundary,10000),]
+  filter(COUNTYFIPS %in% c("08013", "08014", "08069", "08123") |  is.na(COUNTYFIPS)) %>% 
+  dplyr::select(DistrictName, Name) %>% 
+  distinct()
 
 # elementary school
 school.elementary.point <- school.elementary %>% 
@@ -316,8 +296,15 @@ school.elementary.point <- school.elementary %>%
     by = c("Name" = "NAME")
   ) %>% 
   st_sf() %>% 
-  dplyr::select(Name)
-school.elementary.point <- school.elementary.point[st_buffer(county_boundary,5000),]
+  filter(COUNTYFIPS %in% c("08013", "08014", "08059", "08069", "08123") |  is.na(COUNTYFIPS)) %>% 
+  # remove those school with the same name
+  filter(OBJECTID != "77522" | is.na(OBJECTID)) %>% 
+  filter(OBJECTID != "60157" | is.na(OBJECTID)) %>%
+  filter(DistrictName != "St Vrain Valley RE1J" | CITY != "BOULDER" | is.na(CITY)) %>% 
+  filter(DistrictName != "Boulder Valley Re 2" | CITY != "LONGMONT" | is.na(CITY)) %>% 
+  dplyr::select(DistrictName,Name) %>% 
+  distinct()
+
 ```
 
 ## Feature Engineering
@@ -329,35 +316,36 @@ school.elementary.point <- school.elementary.point[st_buffer(county_boundary,500
 (assuming scale relationship uniform countywide)
 
 **average distance of k-nearest case**
-combine school data with sale data
+combine school name with sale data
+
+### School
 ```{r}
 # combine with high school
 sale <- physical_data %>% 
-  st_join(area.high) %>% 
-  st_sf() %>% 
-  left_join(school.name, by = c("State_CD" = "CDEID"))
+  st_join(school.high)
 # rename column
-colnames(sale)[52] <- 'high_school'
+sale <- rename(sale, c( "high_school" = "Name","high_school_points" = "Total_Percent_Points"))
 
 # combine with elementary school
 sale <- sale %>% 
-  st_join(area.elementary)%>% 
-  st_sf()%>% 
-  left_join(school.name, by = c("State_CD.y" = "CDEID"))
+  st_join(school.elementary)
 # rename column
-colnames(sale)[56] <- 'elmtr_school'
+sale <- rename(sale, c( "elmtr_school" = "Name","elmtr_school_points" = "Total_Percent_Points"))
+```
 
+combine school distance with sale data
+```{r combine school distance with sale data}
 # add distance to high school
 # make a df contain school geometry with order
 school.high.order <- sale %>% 
   st_drop_geometry() %>% 
   left_join(
-    school.tidy %>% 
-      filter(LEVEL_ == "HIGH"), 
-    by = c("high_school" = "NAME")
+    school.high.point,
+    by = c("high_school" = "Name")
     ) %>% 
-  st_sf()
-# caculate distance
+  st_sf() %>% 
+  dplyr::select(MUSA_ID)
+# calculate distance
 sale <- sale %>% 
   dplyr::mutate(
     hsch_distance = st_distance(sale, school.high.order, by_element = TRUE)
@@ -365,22 +353,21 @@ sale <- sale %>%
 
 # add distance to elementary school
 # make a df contain school geometry with order
-school.elmtr.order <- sale %>% 
+school.elementary.order <- sale %>% 
   st_drop_geometry() %>% 
   left_join(
-    school.tidy %>% 
-      filter(LEVEL_ == "ELEMENTARY"), 
-    by = c("elmtr_school" = "NAME")
+    school.elementary.point,
+    by = c("elmtr_school" = "Name", "DistrictName.y" = "DistrictName")
     ) %>% 
-  st_sf()
-# caculate distance
+  st_sf() %>% 
+  dplyr::select(MUSA_ID)
+# calculate distance
 sale <- sale %>% 
   dplyr::mutate(
-    elmtr_distance = st_distance(sale, school.elmtr.order, by_element = TRUE)
+    elmtr_distance = st_distance(sale, school.elementary.order, by_element = TRUE)
   )
-# still have name not match
 #ALICIA SANCHEZ ELEMENTARY SCHOOL
-x <- left_join(school.tidy, school.name, by= c("NAME" = "ICSCHNAME"), keep = TRUE)
+#x <- left_join(school.tidy, school.name, by= c("NAME" = "ICSCHNAME"), keep = TRUE)
 ```
 
 
