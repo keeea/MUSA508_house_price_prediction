@@ -15,7 +15,7 @@ knitr::opts_chunk$set(echo = TRUE)
 setwd("/Users/lexi/Desktop/UPENN_COURSE/MUSA_508/assignment/assignment2")
 
 # for Austin
-#setwd("C:/Users/austi/Desktop/Penn/Classes/PublicPolicy/Assignments/Midterm")
+#setwd("C:/Users/austi/Desktop/Penn/Classes/PublicPolicy/Assignments/")
 ```
 
 ```{r setup}
@@ -369,6 +369,7 @@ sale <- sale %>%
 #ALICIA SANCHEZ ELEMENTARY SCHOOL
 #x <- left_join(school.tidy, school.name, by= c("NAME" = "ICSCHNAME"), keep = TRUE)
 ```
+### Hospital
 
 
 ## Exploratory Analysis
