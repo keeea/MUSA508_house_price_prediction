@@ -12,7 +12,7 @@ knitr::opts_chunk$set(echo = TRUE)
 **please choose and run this this chunk first everytime**
 ```{r set working directory}
 # for Lan
-setwd("/Users/lexi/Desktop/UPENN_COURSE/MUSA_508/assignment/assignment2")
+#setwd("/Users/lexi/Desktop/UPENN_COURSE/MUSA_508/assignment/assignment2")
 
 # for Austin
 setwd("C:/Users/austi/Desktop/Penn/Classes/PublicPolicy/Assignments/")
@@ -32,6 +32,7 @@ library(sf)
 library(kableExtra)
 library(jtools)     # for regression model plots
 library(ggstance) # to support jtools plots
+library(Rcpp)
 library(mapview)
 
 # functions and data directory
@@ -65,6 +66,7 @@ load property-information data
 physical_data <- st_read("data/studentData.geojson") %>% 
   st_set_crs('ESRI:102254')
 ```
+
 
 ```{r load city boundary data}
 city_boundary <- st_read("https://opendata.arcgis.com/datasets/955e7a0f52474b60a9866950daf10acb_0.geojson") %>% 
@@ -388,4 +390,34 @@ sale <- sale %>%
 
 
 
+```{r parks data}
+parks <- st_read("https://opendata.arcgis.com/datasets/61728921abcb481fa98b9b07cfd7c95d_0.geojson") %>%
+  st_transform('ESRI:102254') %>%
+    filter(PARK_GROUP != "NA") %>%
+  distinct()
+  
+mapview(parks)
+```
 
+```{r Boulder County School District Boundaries}
+nhoods <- st_read("Midterm/tl_2020_08_unsd/tl_2020_08_unsd.shp")
+
+
+
+```
+
+```{r Trailheads}
+trailheads <- st_read("https://opendata.arcgis.com/datasets/3a950053bbef46c6a3c2abe3aceee3de_0.geojson") %>%
+  st_transform('ESRI:102254')
+
+mapview(trailHeads)
+
+```
+
+```{r Boulder City Historic Districts}
+histDists <- st_read("https://opendata.arcgis.com/datasets/643848efa2e24bdf8a8eafba67ec3d43_1.geojson") %>%
+  st_transform('ESRI:102254')
+
+mapview(histDists)
+
+```
