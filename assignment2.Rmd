@@ -65,7 +65,7 @@ load property-information data
 physical_data <- st_read("data/studentData.geojson") %>% 
   st_set_crs('ESRI:102254')
 ```
-load Boulder city boundary
+
 ```{r load city boundary data}
 city_boundary <- st_read("https://opendata.arcgis.com/datasets/955e7a0f52474b60a9866950daf10acb_0.geojson") %>% 
   st_transform('ESRI:102254') %>% 
@@ -73,7 +73,7 @@ city_boundary <- st_read("https://opendata.arcgis.com/datasets/955e7a0f52474b60a
   st_buffer(1) %>%
   st_sf()
 ```
-
+load Boulder county boundary
 ```{r load county boundary data}
 county_boundary <- st_read("https://opendata.arcgis.com/datasets/964b8f3b3dbe401bb28d49ac93d29dc4_0.geojson") %>% 
   st_transform('ESRI:102254') 
