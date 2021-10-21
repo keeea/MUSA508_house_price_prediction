@@ -42,6 +42,12 @@ library(Rcpp)
 library(mapview)
 library(MASS)
 library(GGally)
+library(stargazer)
+library(units)
+library(viridis) #NEW ADD
+
+options(scipen=999) #NEW ADD
+options(tigris_class = "sf") #NEW ADD
 
 # functions and data directory
 root.dir = "https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/"
@@ -53,7 +59,6 @@ palette1 <- c('#f2d6a2', '#dfd688', '#ccd270', '#b8ca58', '#a4bf41')  # lighter 
 palette2 <- c('#ffd358', '#e1cf5b', '#b9bc4e', '#879a32', '#4f6d00')   # stronger one
 palette3 <- c('#f2d6a2', '#e9d596', '#dfd38a', '#d6d17e', '#ccce72', '#c2cb66', '#b8c85a', '#aec44d', '#a4bf41')  # lighter one with more gradient
 ```
-
 
 # Data Wrangling
 
@@ -480,6 +485,8 @@ physical_data$IntWall <- as.character(physical_data$IntWall)
 
 ### School
 ```{r}
+physical_data <- physical_data %>% 
+    mutate(category = "Internal Characteristics")
 # combine with high school
 sale <- physical_data %>% 
   st_join(school.high)
@@ -663,6 +670,8 @@ sale.final <- left_join(
   ) %>%
   st_as_sf() %>%
   dplyr::select(-UnitCount, -Stories, -Roof_Cover, -ExtWallSec, -Ac)
+
+sale.final$category[sale.final$category != "Internal Characteristics"] <- "Public services"
 ```
 
 
@@ -694,9 +703,19 @@ sale.final <-
 				 )
 ```
 
-## Exploratory Analysis: Correlation
+## Exploratory Analysis
+### Statistic Summary
+```{r}
+stargazer(
+  select_if(st_drop_geometry(sale.final) %>% filter(toPredict==0), is.numeric)%>% na.omit() %>% drop_units(), 
+  title = "Table 1. descriptive statistic",
+  type="text",
+  digits = 1
+  )
+```
 
 
+### Correlation
 ```{r warning=FALSE, fig.height=8, fig.width=8}
 numericVars <- 
   select_if(st_drop_geometry(sale.final), is.numeric) %>% na.omit()
@@ -747,9 +766,11 @@ toModel.1 <- sale.final %>%
 
 
 
-#inTrain <- createDataPartition(
-#              y = paste(toModel.1$quallifyCode,toModel.1$elmtr_school,toModel.1$mainfloorSF,toModel.1$HeatingDscr),
-#              p = .75, list = FALSE)
+inTrain <- createDataPartition(
+             y = paste(toModel.1$quallifyCode,toModel.1$GEOID,toModel.1$mainfloorSF,toModel.1$HeatingDscr),
+              p = .75, list = FALSE)
+set.seed(666)
+
 sale.training <- toModel.1[inTrain,] 
 sale.test <- toModel.1[-inTrain,]  
 ```
@@ -840,6 +861,61 @@ reg.cv.4$resample[1:5,]
 ```{r}
 #summary(step)
 ```
+
+### model 5 - Using variables selected by stepwise except neighborhood
+```{r remove elmtr_school high_school city GEOID in_hist*city}
+reg.training.5 <- lm(LNprice ~ year_quarter + bld_num + section_num + designCode + 
+    qualityCodeDscr + ConstCode + builtYear + CompCode + EffectiveYear + 
+    LNbsmtSF + bsmtType + carStorageSF + nbrBedRoom + nbrRoomsNobath + 
+    LNmainfloorSF + LNnbrThreeQtrBaths + LNnbrFullBaths + LNnbrHalfBaths + 
+    LNTotalFinishedSF + AcDscr + Heating + ExtWallPrim + ExtWallDscrSec + 
+    IntWall + Roof_CoverDscr  + hsch_distance + 
+    parkCount + LNcrime_nn1 + LNcrime_nn2 + LNcrime_nn3 + 
+    LNcrime_nn4 + LNcrime_nn5 + LNtrailheadCount, 
+    data = st_drop_geometry(sale.training))
+
+summary(reg.training.5)
+```
+
+
+```{r}
+#MAPE
+
+reg.test5 <-
+  sale.test %>%
+  mutate(price.Predict = exp(predict(reg.training.5, sale.test))-1,
+         price.Error = price.Predict - price,
+         price.AbsError = abs(price.Predict - price),
+         price.APE = (abs(price.Predict - price)) / price.Predict,
+         Regression = "Baseline Reression") %>% 
+  na.omit(cols='price.Predict') 
+
+mean(reg.test5$price.AbsError, na.rm = T)
+mean(reg.test5$price.APE, na.rm = T)
+
+```
+
+```{r}
+fitControl <- trainControl(method = "cv", number = 100)
+set.seed(825)
+# cross-validation
+reg.cv.5 <- 
+  train(LNprice ~ year_quarter + bld_num + section_num + designCode + 
+    qualityCodeDscr + ConstCode + builtYear + CompCode + EffectiveYear + 
+    LNbsmtSF + bsmtType + carStorageSF + nbrBedRoom + nbrRoomsNobath + 
+    LNmainfloorSF + LNnbrThreeQtrBaths + LNnbrFullBaths + LNnbrHalfBaths + 
+    LNTotalFinishedSF + AcDscr + Heating + ExtWallPrim + ExtWallDscrSec + 
+    IntWall + Roof_CoverDscr + high_school + elmtr_school + hsch_distance + 
+    city  + parkCount + LNcrime_nn1 + LNcrime_nn2 + LNcrime_nn3 + 
+    LNcrime_nn4 + LNcrime_nn5 + in_hist*BoulderCity + LNtrailheadCount + elmtr_distance,
+    data = st_drop_geometry(sale.training),
+    method = "lm", trControl = fitControl, na.action = na.pass)
+
+reg.cv.5
+reg.cv.5$resample[1:5,]
+```
+
+
 ### model 6 - Using variables selected by stepwise
 ```{r}
 reg.training.6 <- lm(LNprice ~ year_quarter + bld_num + section_num + designCode + 
@@ -860,10 +936,12 @@ summary(reg.training.6)
 
 reg.test6 <-
   sale.test %>%
-  mutate(price.Predict = exp(predict(reg.training.6, sale.test))-1,
-         price.Error = price.Predict - price,
+  mutate(price.Predict = exp(predict(reg.training.6, sale.test))-1) %>% 
+  na.omit(cols='price.Predict') %>% 
+  mutate(price.Error = price.Predict - price,
          price.AbsError = abs(price.Predict - price),
-         price.APE = (abs(price.Predict - price)) / price.Predict)
+         price.APE = (abs(price.Predict - price)) / price.Predict,
+         Regression = "Neighborhood Effects")
 
 
 mean(reg.test6$price.AbsError, na.rm = T)
@@ -892,142 +970,184 @@ reg.cv.6 <-
 reg.cv.6
 reg.cv.6$resample[1:5,]
 ```
-### model 5 - add elmtr_distance to model 6
-```{r}
-reg.training.5 <- lm(LNprice ~ year_quarter + bld_num + section_num + designCode + 
+
+## Map of all predicted values
+```{r include=FALSE}
+reg.training.6.2 <- lm(LNprice ~ year_quarter + bld_num + designCode + 
     qualityCodeDscr + ConstCode + builtYear + CompCode + EffectiveYear + 
     LNbsmtSF + bsmtType + carStorageSF + nbrBedRoom + nbrRoomsNobath + 
     LNmainfloorSF + LNnbrThreeQtrBaths + LNnbrFullBaths + LNnbrHalfBaths + 
-    LNTotalFinishedSF + AcDscr + Heating + ExtWallPrim + ExtWallDscrSec + 
+    LNTotalFinishedSF + AcDscr  + ExtWallPrim + ExtWallDscrSec + 
     IntWall + Roof_CoverDscr + high_school + elmtr_school + hsch_distance + 
     city + GEOID + parkCount + LNcrime_nn1 + LNcrime_nn2 + LNcrime_nn3 + 
-    LNcrime_nn4 + LNcrime_nn5 + in_hist*BoulderCity + LNtrailheadCount + elmtr_distance, 
+    LNcrime_nn4 + LNcrime_nn5 + in_hist*BoulderCity + LNtrailheadCount, 
     data = st_drop_geometry(sale.training))
 
-summary(reg.training.5)
-```
-```{r}
-#MAPE
-
-reg.test5 <-
-  sale.test %>%
-  mutate(price.Predict = exp(predict(reg.training.5, sale.test))-1,
-         price.Error = price.Predict - price,
-         price.AbsError = abs(price.Predict - price),
-         price.APE = (abs(price.Predict - price)) / price.Predict)
-
-mean(reg.test5$price.AbsError, na.rm = T)
-mean(reg.test5$price.APE, na.rm = T)
-
 ```
 
 ```{r}
-# cross-validation
-reg.cv.5 <- 
-  train(LNprice ~ year_quarter + bld_num + section_num + designCode + 
-    qualityCodeDscr + ConstCode + builtYear + CompCode + EffectiveYear + 
-    LNbsmtSF + bsmtType + carStorageSF + nbrBedRoom + nbrRoomsNobath + 
-    LNmainfloorSF + LNnbrThreeQtrBaths + LNnbrFullBaths + LNnbrHalfBaths + 
-    LNTotalFinishedSF + AcDscr + Heating + ExtWallPrim + ExtWallDscrSec + 
-    IntWall + Roof_CoverDscr + high_school + elmtr_school + hsch_distance + 
-    city + GEOID + parkCount + LNcrime_nn1 + LNcrime_nn2 + LNcrime_nn3 + 
-    LNcrime_nn4 + LNcrime_nn5 + in_hist*BoulderCity + LNtrailheadCount + elmtr_distance,
-    data = st_drop_geometry(sale.training),
-    method = "lm", trControl = fitControl, na.action = na.pass)
+# Predict price for all
+sale.predict <- sale.final %>%
+  mutate(price.Predict = exp(predict(reg.training.6.2, sale.final))-1,
+         Regression = "Neighborhood Effects") %>% 
+  na.omit(cols='price.Predict')
 
-reg.cv.5
-reg.cv.5$resample[1:5,]
+#Map of Dependent Variable - Sale Price
+ggplot() +
+  geom_sf(data = census, fill = "grey40") +
+  geom_sf(data = sale.predict , aes(color = q5(price.Predict))) +
+  scale_color_viridis(discrete = TRUE,
+                    labels = qBr(sale.predict, "price.Predict"),
+                    name = "Predict Price\n(Quintile Breaks)") +
+  labs(title = "Predicted Sales Prices", subtitle = "Boulder County, CO") +
+  mapTheme()
 ```
 
-### model 2 -add median price to model 6
+# Special Eevaluation
+
+## Cluster of Price and Errors
+Cluster of errors - Map
 ```{r}
-#create lagPrice
-coords <- st_coordinates(sale.final) 
-
-neighborList <- knn2nb(knearneigh(coords, 10))
-
-spatialWeights <- nb2listw(neighborList, style="W")
-
-sale.final.lag <- sale.final
-
-sale.final.lag$LNlagPrice <- lag.listw(spatialWeights, sale.final.lag$LNprice)
-
-toModel.lag <- sale.final.lag %>% 
-  filter(toPredict == 0)
-#inTrain.2 <- createDataPartition(
-#              y = paste(toModel.lag$GEOID,toModel.lag$elmtr_school,toModel.lag$TotalFinishedSF, #toModel.lag$section_num,toModel.lag$ExtWallPrim, toModel.lag$Heating),
-#              p = .75, list = FALSE)
-sale.training.lag <- toModel.lag[inTrain.2,] 
-sale.test.lag <- toModel.lag[-inTrain.2,]  
-
-
-reg.training.2 <- lm(LNprice ~ year_quarter + bld_num + section_num + designCode + 
-    qualityCodeDscr + ConstCode + builtYear + CompCode + EffectiveYear + 
-    LNbsmtSF + bsmtType + carStorageSF + nbrBedRoom + nbrRoomsNobath + 
-    LNmainfloorSF + LNnbrThreeQtrBaths + LNnbrFullBaths + LNnbrHalfBaths + 
-    LNTotalFinishedSF + AcDscr + Heating + ExtWallPrim + ExtWallDscrSec + 
-    IntWall + Roof_CoverDscr + high_school + elmtr_school + hsch_distance + 
-    city + GEOID + parkCount + LNcrime_nn1 + LNcrime_nn2 + LNcrime_nn3 + 
-    LNcrime_nn4 + LNcrime_nn5 + in_hist*BoulderCity + LNtrailheadCount + LNlagPrice, 
-    data = st_drop_geometry(sale.training.lag))
-
-summary(reg.training.2)
-```
-
-
-```{r}
-#MAPE
-
-reg.test2 <-
-  sale.test.lag %>%
-  mutate(price.Predict = exp(predict(reg.training.2, sale.test.lag))-1,
-         price.Error = price.Predict - price,
-         price.AbsError = abs(price.Predict - price),
-         price.APE = (abs(price.Predict - price)) / price.Predict)
-
-
-mean(reg.test2$price.AbsError, na.rm = T)
-mean(reg.test2$price.APE, na.rm = T)
-
+ggplot() +
+  geom_sf(data = census, fill = "grey40") +
+  geom_sf(data = reg.test6 , aes(color = q5(price.Error))) +
+  scale_color_viridis(discrete = TRUE,
+                    labels = qBr(reg.test6, "price.Error"),
+                    name = "Model Errors\n(Quintile Breaks)") +
+  labs(title = "Sale price errors on the test set", subtitle = "Boulder County, CO") +
+  mapTheme()
 ```
 
 ```{r}
-# cross-validation
-reg.cv.2 <- 
-  train(LNprice ~ year_quarter + bld_num + section_num + designCode + 
-    qualityCodeDscr + ConstCode + builtYear + CompCode + EffectiveYear + 
-    LNbsmtSF + bsmtType + carStorageSF + nbrBedRoom + nbrRoomsNobath + 
-    LNmainfloorSF + LNnbrThreeQtrBaths + LNnbrFullBaths + LNnbrHalfBaths + 
-    LNTotalFinishedSF + AcDscr + Heating + ExtWallPrim + ExtWallDscrSec + 
-    IntWall + Roof_CoverDscr + high_school + elmtr_school + hsch_distance + 
-    city + GEOID + parkCount + LNcrime_nn1 + LNcrime_nn2 + LNcrime_nn3 + 
-    LNcrime_nn4 + LNcrime_nn5 + in_hist*BoulderCity + LNtrailheadCount + LNlagPrice, 
-    data = st_drop_geometry(sale.training.lag),
-    method = "lm", trControl = fitControl, na.action = na.pass)
+# Create spatial weights
+coords.test <-  st_coordinates(reg.test6) 
+neighborList.test <- knn2nb(knearneigh(coords.test, 5))
+spatialWeights.test <- nb2listw(neighborList.test, style="W")
 
-reg.cv.2
-reg.cv.2$resample[1:5,]
+# combine 2 baseline regression with neiborhood effects regression
+bothRegressions <- 
+  rbind(
+    dplyr::select(reg.test5, starts_with("price"), Regression, GEOID) %>%
+      mutate(lagPriceError = lag.listw(spatialWeights.test, price.Error)),
+    dplyr::select(reg.test6, starts_with("price"), Regression, GEOID) %>%
+      mutate(lagPriceError = lag.listw(spatialWeights.test, price.Error)))   
+
+# map
+st_drop_geometry(bothRegressions) %>%
+  group_by(Regression, GEOID) %>%
+  summarize(mean.MAPE = mean(price.APE, na.rm = T)) %>%
+  ungroup() %>% 
+  left_join(census) %>%
+    st_sf() %>%
+    ggplot() + 
+      geom_sf(aes(fill = mean.MAPE)) +
+      geom_sf(data = bothRegressions, colour = "black", size = .5) +
+      facet_wrap(~Regression) +
+      scale_fill_gradient(low = palette2[1], high = palette2[5],
+                          name = "MAPE") +
+      labs(title = "Mean test set MAPE by neighborhood") +
+      mapTheme()
 ```
-### to predict
 
-
-
-
-
-
+Cluster of errors - The Spatial Lag
 ```{r}
-toPredict <- sale.final.lag %>% 
-  filter(toPredict == 1)
 
-toPredict <-
-  toPredict %>%
-  dplyr::select(-price) %>% 
-  cbind(
-          data.frame(price = exp(predict(reg.training.2, toPredict))-1)
-  ) %>% 
-  dplyr::select(MUSA_ID, price)
-
-#write.csv(toPredict,file="prediction.csv",quote=F,row.names = F)
+# Make a map of lag errors
+reg.test6 %>% 
+  mutate(lagPriceError = lag.listw(spatialWeights.test, price.Error)) %>%
+  ggplot(aes(lagPriceError, price.Error))+
+  geom_point() +
+  stat_smooth(aes(lagPriceError, price.Error), 
+             method = "lm", se = FALSE, size = 1, colour="#FA7800") + 
+  labs(title = "Error as a function of the spatial lag of price",
+       x = "Spatial lag of errors (Mean error of 5 nearest neighbors)",
+       y = "Price errors") +
+  plotTheme()
 ```
+Cluster of errors - Moran’s I test
+```{r}
+# Do Moran test
+moranTest <- moran.mc(reg.test6$price.Error %>% na.omit(), 
+                      spatialWeights.test, nsim = 999)
+
+# Plot the test result
+ggplot(as.data.frame(moranTest$res[c(1:999)]), aes(moranTest$res[c(1:999)])) +
+  geom_histogram(binwidth = 0.01) +
+  geom_vline(aes(xintercept = moranTest$statistic), colour = "#FA7800",size=1) +
+  scale_x_continuous(limits = c(-0.2, 0.2)) +
+  labs(title="Observed and Permuted Moran's I",
+       subtitle= "Observed Moran's I in orange",
+       x="Moran's I",
+       y="Count") +
+  plotTheme()
+```
+
+## Accounting for neighborhoods
+### Generalizability 
+
+```{r, fig.height=5, fig.width=7}
+tracts17 <- 
+  get_acs(geography = "tract", variables = c("B01001_001E","B01001A_001E","B06011_001E","B23025_003E","B23025_005E"), 
+          year = 2017, state=25, county=025, geometry=T, output = "wide") %>%
+  st_transform('ESRI:102286')  %>%
+  rename(TotalPop = B01001_001E,
+         NumberWhites = B01001A_001E,
+         Median_Income = B06011_001E,
+         TotalLabor = B23025_003E, 
+         Unemployment = B23025_005E) %>%
+  mutate(percentWhite = NumberWhites / TotalPop,
+         UnemploymentRate = Unemployment / TotalLabor,
+         raceContext = ifelse(percentWhite > .5, "Majority White", "Majority Non-White"),
+         incomeContext = ifelse(Median_Income > 32322, "High Income", "Low Income"),
+         UnemploymentContext = ifelse(UnemploymentRate > 0.03757467, "High Unemployment", "Low Unemployment"))
+
+grid.arrange(ncol = 3,
+  ggplot() + geom_sf(data = na.omit(tracts17), aes(fill = raceContext)) +
+    scale_fill_manual(values = c("#25CB10", "#FA7800"), name="Race Context") +
+    labs(title = "Race Context") +
+    mapTheme() + theme(legend.position="bottom"), 
+  ggplot() + geom_sf(data = na.omit(tracts17), aes(fill = incomeContext)) +
+    scale_fill_manual(values = c("#25CB10", "#FA7800"), name="Income Context") +
+    labs(title = "Income Context") +
+    mapTheme() + theme(legend.position="bottom"),
+  ggplot() + geom_sf(data = na.omit(tracts17), aes(fill = UnemploymentContext)) +
+    scale_fill_manual(values = c("#25CB10", "#FA7800"), name="Unemployment Context") +
+    labs(title = "Unemployment Context") +
+    mapTheme() + theme(legend.position="bottom"))
+```
+a map of mean absolute percentage error (MAPE) by neighborhood
+```{r}
+# map
+st_drop_geometry(bothRegressions) %>%
+  group_by(Regression, GEOID) %>%
+  summarize(mean.MAPE = mean(price.APE, na.rm = T)) %>%
+  ungroup() %>% 
+  left_join(census) %>%
+    st_sf() %>%
+    ggplot() + 
+      geom_sf(aes(fill = mean.MAPE)) +
+      geom_sf(data = bothRegressions, colour = "black", size = .5) +
+      facet_wrap(~Regression) +
+      scale_fill_gradient(low = palette2[1], high = palette2[5],
+                          name = "MAPE") +
+      labs(title = "Mean test set MAPE by neighborhood") +
+      mapTheme()
+```
+a scatterplot plot of MAPE by neighborhood as a function of mean price by neighborhood
+```{r}
+reg.test6 %>% 
+  group_by(GEOID) %>% 
+  summarise(MAPE = mean(price.APE), MeanPrice = mean(price)) %>% 
+  st_drop_geometry() %>% 
+  ggplot(aes(MeanPrice,MAPE))+
+  geom_point() +
+  stat_smooth(aes(MeanPrice,MAPE), 
+            method = "lm", se = FALSE, size = 1, colour="#FA7800") + 
+  labs(title = "MAPE by neighborhood as a function of mean price by neighborhood",
+       x = "Mean sale Price by neighborhood",
+       y = "Mean absolute percentage error by neighborhood") +
+  plotTheme()
+```
+
 
 
