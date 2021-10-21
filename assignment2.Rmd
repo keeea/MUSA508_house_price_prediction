@@ -6,7 +6,11 @@ output: html_document
 
 ```{r setup, include=FALSE}
 # You can set some global options for knitting chunks
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
 ```
 
 **please choose and run this this chunk first everytime**
@@ -15,26 +19,29 @@ knitr::opts_chunk$set(echo = TRUE)
 setwd("/Users/lexi/Desktop/UPENN_COURSE/MUSA_508/assignment/assignment2")
 
 # for Austin
-#setwd("C:/Users/austi/Desktop/Penn/Classes/PublicPolicy/Assignments/")
+#setwd("C:/Users/austi/Desktop/Penn/Classes/PublicPolicy/Labs/Lab2/MUSA508_house_price_prediction")
 ```
 
 ```{r setup}
 # Load some libraries
 library(tidyverse)
+library(tidycensus)
 library(sf)
 library(FNN)
-#library(spdep)
-#library(caret)
-#library(ckanr)
-#library(FNN)
-#library(grid)
-#library(gridExtra)
-#library(ggcorrplot)
+library(spdep)
+library(caret)
+library(ckanr)
+library(FNN)
+library(grid)
+library(gridExtra)
+library(ggcorrplot)
 library(kableExtra)
 library(jtools)     # for regression model plots
 library(ggstance) # to support jtools plots
 library(Rcpp)
 library(mapview)
+library(MASS)
+library(GGally)
 
 # functions and data directory
 root.dir = "https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/"
@@ -66,6 +73,12 @@ load property-information data
 ```{r load physical characteristic data}
 physical_data <- st_read("data/studentData.geojson") %>% 
   st_set_crs('ESRI:102254')
+
+```
+change NA in AcDscr into without
+```{r}
+physical_data$AcDscr[is.na(physical_data$AcDscr)] <- "without"
+physical_data$Ac[is.na(physical_data$AcDscr)] <- "without"
 ```
 
 load Boulder city boundary
@@ -170,9 +183,9 @@ load school data
 schools <- st_read("data/Public_Schools.geojson") %>% 
   st_transform('ESRI:102254')
 ```
-trim schools to those within Boulder county and select schools are operational and regular
+select schools are operational and regular
 ```{r schools trim within Boulder}
-# trim within Boulder
+# select schools are operational and regular
 schools <- rbind(
   schools %>% 
     dplyr::filter(NAME == "BROOMFIELD HIGH SCHOOL"), # This school isn't within Boulder, but some Boulder residents should attend it
@@ -184,6 +197,7 @@ schools <- rbind(
     dplyr::filter(NAME != "NEW VISTA HIGH SCHOOL")  # This school isn't in school district list
 )
 schools <- schools[st_buffer(county_boundary,10000),]
+
 ```
 
 load school rating data
@@ -256,8 +270,8 @@ school.elementary <- rbind(
 school.elementary <- st_sf(school.elementary)
 school.elementary <- st_intersection(school.elementary, county_boundary)%>% 
   dplyr::select(DistrictName, Name, Total_Percent_Points, geometry)
-
 ```
+
 combine school point with school rating data
 ```{r combine school point with school rating data}
 # high school
@@ -271,6 +285,17 @@ school.high.point <- school.high %>%
   filter(COUNTYFIPS %in% c("08013", "08014", "08069", "08123") |  is.na(COUNTYFIPS)) %>% 
   dplyr::select(DistrictName, Name) %>% 
   distinct()
+
+# add geometry for one high school 
+# make the geometry
+geometry <- st_point(x = c(-105.49524267430837,40.37119690801272), dim="xy") %>% 
+  st_sfc(crs = 4326) 
+geometry <- st_sf(DistrictName = "Estes Park R-3",Name = "ESTES PARK HIGH SCHOOL", geometry) %>% 
+  st_transform('ESRI:102254')
+# combine with high school data
+school.high.point <- school.high.point %>% 
+  filter(Name != "ESTES PARK HIGH SCHOOL") %>% 
+  rbind(geometry)
 
 # elementary school
 school.elementary.point <- school.elementary %>% 
@@ -286,8 +311,30 @@ school.elementary.point <- school.elementary %>%
   filter(OBJECTID != "60157" | is.na(OBJECTID)) %>%
   filter(DistrictName != "St Vrain Valley RE1J" | CITY != "BOULDER" | is.na(CITY)) %>% 
   filter(DistrictName != "Boulder Valley Re 2" | CITY != "LONGMONT" | is.na(CITY)) %>% 
+  filter(Name != "MOUNTAIN VIEW ELEMENTARY SCHOOL" | CITY == "LONGMONT" | is.na(CITY)) %>% 
   dplyr::select(DistrictName,Name) %>% 
   distinct()
+
+# add geometry for three elementary schools 
+# make the geometry
+geometry <- st_point(x = c(-105.49774609253775, 40.36845070512792), dim="xy") %>% 
+  st_sfc(crs = 4326) 
+geometry2 <- st_sf(DistrictName = "Estes Park R-3",Name = "ESTES PARK K-5 SCHOOL", geometry) %>% 
+  st_transform('ESRI:102254')
+geometry <- st_point(x = c(-104.92971708817917, 40.50780548561505), dim="xy") %>% 
+  st_sfc(crs = 4326) 
+geometry3 <- st_sf(DistrictName = "St Vrain Valley RE1J",Name = "GRAND VIEW ELEMENTARY", geometry) %>% 
+  st_transform('ESRI:102254')
+geometry <- st_point(x = c(-105.08177294592369, 40.07535419035197), dim="xy") %>% 
+  st_sfc(crs = 4326) 
+geometry4 <- st_sf(DistrictName = "Boulder Valley Re 2",Name = "MEADOWLARK SCHOOL", geometry) %>% 
+  st_transform('ESRI:102254')
+# combine with high school data
+school.elementary.point <- school.elementary.point %>% 
+  filter(Name != "ESTES PARK K-5 SCHOOL" & Name != "GRAND VIEW ELEMENTARY" & Name != "MEADOWLARK SCHOOL") %>% 
+  rbind(geometry2) %>% 
+  rbind(geometry3) %>% 
+  rbind(geometry4)
 
 ```
 
@@ -297,6 +344,27 @@ load hospital data
 # load and select field
 hospitals <- st_read("data/hOSPITALS.geojson") %>% 
   st_transform('ESRI:102254')
+```
+
+### Census Data: block groups & unemployment
+```{r load census unemployment data}
+# load unemployment data
+census <-  
+  get_acs(geography = "block group", variables = c("B23025_003E","B23025_005E"), 
+                year=2019, state=08, county=013, geometry=T) %>% 
+  st_transform('ESRI:102254')
+# transform the format
+census <- 
+  census %>%
+  dplyr::select( -NAME, -moe) %>%
+  spread(key = variable, value = estimate) %>%
+  rename(TotalLabor = B23025_003, 
+         Unemployment = B23025_005
+         ) %>% 
+  mutate(UnemploymentRate = Unemployment / TotalLabor) %>% 
+  dplyr::select(GEOID, UnemploymentRate, geometry)
+
+census$GEOID <- as.character(census$GEOID)
 ```
 trim hospitals to those within Boulder county and select hospitals are general and open
 ```{r hospitals trim within Boulder}
@@ -315,7 +383,6 @@ hospitals <- hospitals[county_boundary,] %>%
 #City of Boulder Historic Districts
 histDists <- st_read("https://opendata.arcgis.com/datasets/643848efa2e24bdf8a8eafba67ec3d43_1.geojson") %>%
   st_transform('ESRI:102254')
-mapview(histDists)
 
 physical_data[histDists,] %>%
   dplyr::mutate(Historic = "Yes")
@@ -327,11 +394,10 @@ physical_data[histDists,] %>%
 countyParks <- st_read("https://opendata.arcgis.com/datasets/61728921abcb481fa98b9b07cfd7c95d_0.geojson") %>%
   st_transform('ESRI:102254') %>%
   filter(PARK_GROUP != "NA") %>%
-  select("PROP_NAME")
-mapview(countyParks)
+  dplyr::select("PROP_NAME")
 ```
 
-### crime
+### Crime
 ```{r}
 crime <- read.csv("data/Crime_Data.csv")
 
@@ -381,11 +447,10 @@ allParks <- rbind(countyParks,cityPark_scrubbed)
 #buffer on each house, how many parks it intersects
 ```
 
-#Trailheads
+### Trailheads
 ```{r}
 trailheads <- st_read("https://opendata.arcgis.com/datasets/3a950053bbef46c6a3c2abe3aceee3de_0.geojson") %>%
   st_transform('ESRI:102254')
-mapview(trailheads)
 #buffer on each house, how many points fall within
 ```
 
@@ -399,6 +464,19 @@ mapview(trailheads)
 
 **average distance of k-nearest case**
 combine school name with sale data
+### Internal data
+```{r}
+physical_data$section_num <- as.character(physical_data$section_num)
+physical_data$designCode <- as.character(physical_data$designCode)
+physical_data$section_num <- as.character(physical_data$section_num)
+physical_data$ConstCode <- as.character(physical_data$ConstCode)
+physical_data$bsmtType <- as.character(physical_data$bsmtType)
+physical_data$carStorageType <- as.character(physical_data$carStorageType)
+physical_data$Heating <- as.character(physical_data$Heating)
+physical_data$ExtWallPrim <- as.character(physical_data$ExtWallPrim)
+physical_data$IntWall <- as.character(physical_data$IntWall)
+```
+
 
 ### School
 ```{r}
@@ -452,7 +530,7 @@ sale <- sale %>%
 #x <- left_join(school.tidy, school.name, by= c("NAME" = "ICSCHNAME"), keep = TRUE)
 ```
 ### Hospital
-extract city from adress
+extract city from address
 ```{r extract city from adress, message=FALSE, warning=FALSE}
 # extract address and replace NA
 address <- sale[5] %>% 
@@ -468,6 +546,9 @@ for (i in seq(1:11364)) {
 # combine with sale data
 sale <- sale %>% 
   cbind(city)
+
+sale$BoulderCity[sale$city == "BOULDER"] <- "In"
+sale$BoulderCity[is.na(sale$BoulderCity)] <- "NotIn"
 ```
 combine hospital level with sale data
 ```{r}
@@ -483,7 +564,16 @@ sale <- sale %>%
 #replace NA with no_hospital
 sale$hospital_level[is.na(sale$hospital_level)] <- "no_hospitals"
 ```
-### parks
+### Census Data: block groups & unemployment
+```{r}
+sale <- sale %>% 
+  st_join(
+    y = census,
+    join = st_within,
+    left = TRUE
+  )
+```
+### Parks
 ```{r}
 sale2 <- physical_data
 #FE - Parks#
@@ -493,21 +583,16 @@ allParks <- allParks %>%
 as.numeric(allParks$counter)
 
 sale2$parkCount =
-  st_buffer(sale2, 660) %>%
+  st_buffer(sale2, 603) %>%
   aggregate(dplyr::select(allParks,counter),.,sum) %>%
   pull(counter)
 
 sale2$parkCount[ is.na(sale2$parkCount)] <- 0
 
 ```
-### crimes
+### Crimes
 ```{r}
 #FE Crime
-
-crime.sf$crimes.Buffer =
-  st_buffer(crime.sf, 660) %>%
-  aggregate(mutate(crime.sf, counter = 1),., sum) %>%
-  pull(counter)
 
 st_c <- st_coordinates
 
@@ -518,10 +603,18 @@ sale2 <-
     crime_nn2 = nn_function(st_c(sale2), st_c(crime.sf), 2), 
     crime_nn3 = nn_function(st_c(sale2), st_c(crime.sf), 3), 
     crime_nn4 = nn_function(st_c(sale2), st_c(crime.sf), 4), 
-    crime_nn5 = nn_function(st_c(sale2), st_c(crime.sf), 5)) 
+    crime_nn5 = nn_function(st_c(sale2), st_c(crime.sf), 5),
+    crimes.Buffer =
+      st_buffer(sale2, 1320) %>%
+      aggregate(mutate(crime.sf, counter = 1),., sum) %>%
+      pull(counter)
+    ) 
+
+sale2$crimes.Buffer[is.na(sale2$crimes.Buffer)] <- 0
+
 ```
 
-### historic district
+### Historic District
 ```{r}
 #FE Historic Districts
 
@@ -541,7 +634,7 @@ sale2.nohist <- sale2 %>%
 sale2 <- rbind(sale2.nohist,sale2.inhist)
 
 sale2 <- sale2 %>%
-  select(-OBJECTID,-NAME,-DESIGNATION,-SHAPESTArea,-SHAPESTLength)
+  dplyr::select(-OBJECTID,-NAME,-DESIGNATION,-SHAPESTArea,-SHAPESTLength)
 
 ```
 ### Trailheads
@@ -554,30 +647,291 @@ trailheads <- trailheads %>%
 as.numeric(trailheads$counter)
 
 sale2$trailheadCount =
-  st_buffer(sale2, 660) %>%
+  st_buffer(sale2, 1608) %>%
   aggregate(dplyr::select(trailheads,counter),.,sum) %>%
   pull(counter)
 
 sale2$trailheadCount[ is.na(sale2$trailheadCount)] <- 0
 ```
-### conbine all
+### Combine All
 ```{r}
 sale.final <- left_join(
-  sale %>% 
+  sale %>%
     st_drop_geometry(),
-  sale2 %>% 
-    dplyr::select(MUSA_ID, parkCount, crime_nn1, crime_nn2, crime_nn3, crime_nn4, crime_nn5, in_hist, geometry, trailheadCount)
-  )
+  sale2 %>%
+    dplyr::select(MUSA_ID, parkCount, crime_nn1, crime_nn2, crime_nn3, crime_nn4, crime_nn5, crimes.Buffer, in_hist, geometry, trailheadCount)
+  ) %>%
+  st_as_sf() %>%
+  dplyr::select(-UnitCount, -Stories, -Roof_Cover, -ExtWallSec, -Ac)
 ```
 
-## Exploratory Analysis
+
+## More Feature Engineering: Log transformation
+log transform
+```{r}
+sale.final$price[is.na(sale.final$price)] <- 0
+sale.final <-
+	sale.final %>%
+	mutate(LNprice = log(1+price),
+				 LNbsmtSF = log(1+bsmtSF),
+				 LNmainfloorSF = log(1+mainfloorSF),
+				 LNnbrThreeQtrBaths = log(1+nbrThreeQtrBaths),
+				 LNnbrFullBaths = log(1+nbrFullBaths),
+				 LNnbrHalfBaths = log(1+nbrHalfBaths),
+				 LNTotalFinishedSF = log(1+TotalFinishedSF),
+				 LNcrime_nn1 = log(crime_nn1),
+				 LNcrime_nn2 = log(crime_nn2),
+				 LNcrime_nn3 = log(crime_nn3),
+				 LNcrime_nn4 = log(crime_nn4),
+				 LNcrime_nn5 = log(crime_nn5),
+				 LNtrailheadCount = log(1+trailheadCount),
+				 LNparkCount = log(1+parkCount),
+				 LNhsch_distance = log(hsch_distance)
+				 )
+```
+
+## Exploratory Analysis: Correlation
+
+
+```{r warning=FALSE, fig.height=8, fig.width=8}
+numericVars <- 
+  select_if(st_drop_geometry(sale.final), is.numeric) %>% na.omit()
+
+ggcorrplot(
+  round(cor(numericVars), 1), 
+  p.mat = cor_pmat(numericVars),
+  colors = c("#25CB10", "white", "#FA7800"),
+  type="lower",
+  insig = "blank") +  
+    labs(title = "Correlation across numeric variables") 
+
+```
+
+```{r}
+sale.final.1 <- sale.final %>%
+  dplyr::select(LNprice, year_quarter , bld_num , section_num , designCode , 
+    qualityCodeDscr , ConstCode , builtYear , CompCode , EffectiveYear , 
+    LNbsmtSF , bsmtType , carStorageSF , nbrBedRoom , nbrRoomsNobath , 
+    LNmainfloorSF , LNnbrThreeQtrBaths , LNnbrFullBaths , LNnbrHalfBaths , 
+    LNTotalFinishedSF , AcDscr , Heating , ExtWallPrim , ExtWallDscrSec , 
+    IntWall , Roof_CoverDscr , high_school , elmtr_school , hsch_distance , 
+    city , GEOID , parkCount , LNcrime_nn1 , LNcrime_nn2 , LNcrime_nn3 , 
+    LNcrime_nn4 , LNcrime_nn5 , in_hist , LNtrailheadCount)
+
+```
+
+```{r fig.heihgt=, fig.width=7, message=FALSE, warning=FALSE}
+# for selection plan 1
+numericVars1 <- 
+  select_if(st_drop_geometry(sale.final.1), is.numeric) %>% na.omit()
+ggcorrplot(
+  round(cor(numericVars), 1), 
+  p.mat = cor_pmat(numericVars),
+  colors = c("#25CB10", "white", "#FA7800"),
+  type="lower",
+  insig = "blank") +  
+    labs(title = "Correlation across numeric variables") 
+
+```
+
+
+# Regression & Cross-Validation
+## split data into training and test sets
+```{r split data into training and test sets, warning=FALSE}
+toModel.1 <- sale.final %>% 
+  filter(toPredict == 0)
+
+inTrain <- createDataPartition(
+              y = paste(toModel.1$quallifyCode,toModel.1$elmtr_school,toModel.1$mainfloorSF,toModel.1$HeatingDscr),
+              p = .75, list = FALSE)
+sale.training <- toModel.1[inTrain,] 
+sale.test <- toModel.1[-inTrain,]  
+```
+## regression models
+### model 3 - all variables
+```{r model 3}
+reg.training.3 <- lm(price ~ ., data = st_drop_geometry(sale.training) %>%
+                       na.omit() %>% 
+                       dplyr::select(price,year,year_quarter,bld_num,section_num,designCode,designCodeDscr,qualityCode,qualityCodeDscr,ConstCode,ConstCodeDscr,builtYear,CompCode,EffectiveYear,bsmtSF,bsmtType,bsmtTypeDscr,carStorageSF,carStorageType,carStorageTypeDscr,nbrBedRoom,nbrRoomsNobath,mainfloorSF,nbrThreeQtrBaths,nbrFullBaths,nbrHalfBaths,TotalFinishedSF,AcDscr,Heating,HeatingDscr,ExtWallPrim,ExtWallDscrPrim,ExtWallDscrSec,IntWall,IntWallDscr,Roof_CoverDscr,DistrictName.x,high_school,high_school_points,DistrictName.y,elmtr_school,elmtr_school_points,hsch_distance,elmtr_distance,city,hospital_level,GEOID,UnemploymentRate,parkCount,crime_nn1,crime_nn2,crime_nn3,crime_nn4,crime_nn5,crimes.Buffer,in_hist,trailheadCount))
+
+summary(reg.training.3)
+```
+
+
+```{r eval=FALSE, include=FALSE}
+#MAPE
+
+reg.test3 <-
+  sale.test %>%
+  mutate(price.Predict = predict(reg.training.3, sale.test),
+         price.Error = price.Predict - price,
+         price.AbsError = abs(price.Predict - price),
+         price.APE = (abs(price.Predict - price)) / price.Predict)
+
+mean(reg.test3$price.AbsError, na.rm = T)
+mean(reg.test3$price.APE, na.rm = T)
+
+```
+
+```{r eval=FALSE, include=FALSE}
+# cross-validation
+reg.cv.3 <- 
+  train(price ~ ., data = st_drop_geometry(sale.training) %>% 
+                                dplyr::select(price,year,year_quarter,bld_num,section_num,designCode,designCodeDscr,qualityCode,qualityCodeDscr,ConstCode,ConstCodeDscr,builtYear,CompCode,EffectiveYear,bsmtSF,bsmtType,bsmtTypeDscr,carStorageSF,carStorageType,carStorageTypeDscr,nbrBedRoom,nbrRoomsNobath,mainfloorSF,nbrThreeQtrBaths,nbrFullBaths,nbrHalfBaths,TotalFinishedSF,AcDscr,Heating,HeatingDscr,ExtWallPrim,ExtWallDscrPrim,ExtWallDscrSec,IntWall,IntWallDscr,Roof_CoverDscr,DistrictName.x,high_school,high_school_points,DistrictName.y,elmtr_school,elmtr_school_points,hsch_distance,elmtr_distance,city,hospital_level,GEOID,UnemploymentRate,parkCount,crime_nn1,crime_nn2,crime_nn3,crime_nn4,crime_nn5,crimes.Buffer,in_hist,trailheadCount), 
+     method = "lm", trControl = fitControl, na.action = na.pass)
+
+reg.cv.3
+reg.cv.3$resample[1:5,]
+```
+
+### model 4 - all variables after part of LOG-transformation
+```{r model 4}
+reg.training.4 <- lm(LNprice ~ ., data = st_drop_geometry(sale.training) %>%
+                       na.omit() %>% 
+                       dplyr::select(LNprice,year,year_quarter,bld_num,section_num,designCode,designCodeDscr,qualityCode,qualityCodeDscr,ConstCode,ConstCodeDscr,builtYear,CompCode,EffectiveYear,LNbsmtSF,bsmtType,bsmtTypeDscr,carStorageSF,carStorageType,carStorageTypeDscr,nbrBedRoom,nbrRoomsNobath,LNmainfloorSF,LNnbrThreeQtrBaths,LNnbrFullBaths,LNnbrHalfBaths,LNTotalFinishedSF,AcDscr,Heating,HeatingDscr,ExtWallPrim,ExtWallDscrPrim,ExtWallDscrSec,IntWall,IntWallDscr,Roof_CoverDscr,DistrictName.x,high_school,high_school_points,DistrictName.y,elmtr_school,elmtr_school_points,hsch_distance,elmtr_distance,city,hospital_level,GEOID,UnemploymentRate,parkCount,LNcrime_nn1,LNcrime_nn2,LNcrime_nn3,LNcrime_nn4,LNcrime_nn5,crimes.Buffer,in_hist,LNtrailheadCount))
+
+summary(reg.training.4)
+```
+
+
+```{r eval=FALSE, include=FALSE}
+#MAPE
+
+reg.test4 <-
+  sale.test %>%
+  mutate(price.Predict = exp(predict(reg.training.4, sale.test))-1,
+         price.Error = price.Predict - price,
+         price.AbsError = abs(price.Predict - price),
+         price.APE = (abs(price.Predict - price)) / price.Predict)
+
+mean(reg.test4$price.AbsError, na.rm = T)
+mean(reg.test4$price.APE, na.rm = T)
+
+```
+
+```{r eval=FALSE, include=FALSE}
+# cross-validation
+reg.cv.4 <- 
+  train(LNprice ~ ., data = st_drop_geometry(sale.training) %>% 
+                                dplyr::select(LNprice,year,year_quarter,bld_num,section_num,designCode,designCodeDscr,qualityCode,qualityCodeDscr,ConstCode,ConstCodeDscr,builtYear,CompCode,EffectiveYear,LNbsmtSF,bsmtType,bsmtTypeDscr,carStorageSF,carStorageType,carStorageTypeDscr,nbrBedRoom,nbrRoomsNobath,LNmainfloorSF,LNnbrThreeQtrBaths,LNnbrFullBaths,LNnbrHalfBaths,LNTotalFinishedSF,AcDscr,Heating,HeatingDscr,ExtWallPrim,ExtWallDscrPrim,ExtWallDscrSec,IntWall,IntWallDscr,Roof_CoverDscr,DistrictName.x,high_school,high_school_points,DistrictName.y,elmtr_school,elmtr_school_points,hsch_distance,elmtr_distance,city,hospital_level,GEOID,UnemploymentRate,parkCount,LNcrime_nn1,LNcrime_nn2,LNcrime_nn3,LNcrime_nn4,LNcrime_nn5,crimes.Buffer,in_hist,LNtrailheadCount), 
+     method = "lm", trControl = fitControl, na.action = na.pass)
+
+reg.cv.4
+reg.cv.4$resample[1:5,]
+```
+
+## More Feature Engineering: colinearity (stepwise)
+```{r}
+#！！！This is intense, so I comment them
+#step <- stepAIC(reg.training.4, direction="both")
+```
+
+```{r}
+# display results
+#step$anova
+```
+
+```{r}
+#summary(step)
+```
+### model 6 - Using variables selected by stepwise
+```{r}
+reg.training.6 <- lm(LNprice ~ year_quarter + bld_num + section_num + designCode + 
+    qualityCodeDscr + ConstCode + builtYear + CompCode + EffectiveYear + 
+    LNbsmtSF + bsmtType + carStorageSF + nbrBedRoom + nbrRoomsNobath + 
+    LNmainfloorSF + LNnbrThreeQtrBaths + LNnbrFullBaths + LNnbrHalfBaths + 
+    LNTotalFinishedSF + AcDscr + Heating + ExtWallPrim + ExtWallDscrSec + 
+    IntWall + Roof_CoverDscr + high_school + elmtr_school + hsch_distance + 
+    city + GEOID + parkCount + LNcrime_nn1 + LNcrime_nn2 + LNcrime_nn3 + 
+    LNcrime_nn4 + LNcrime_nn5 + in_hist*BoulderCity + LNtrailheadCount, 
+    data = st_drop_geometry(sale.training))
+
+summary(reg.training.6)
+```
+
+```{r}
+#MAPE
+
+reg.test6 <-
+  sale.test %>%
+  mutate(price.Predict = exp(predict(reg.training.6, sale.test))-1,
+         price.Error = price.Predict - price,
+         price.AbsError = abs(price.Predict - price),
+         price.APE = (abs(price.Predict - price)) / price.Predict)
+
+
+mean(reg.test6$price.AbsError, na.rm = T)
+mean(reg.test6$price.APE, na.rm = T)
+
+```
+
+```{r}
+# cross-validation
+reg.cv.6 <- 
+  train(LNprice ~ year_quarter + bld_num + section_num + designCode + 
+    qualityCodeDscr + ConstCode + builtYear + CompCode + EffectiveYear + 
+    LNbsmtSF + bsmtType + carStorageSF + nbrBedRoom + nbrRoomsNobath + 
+    LNmainfloorSF + LNnbrThreeQtrBaths + LNnbrFullBaths + LNnbrHalfBaths + 
+    LNTotalFinishedSF + AcDscr + Heating + ExtWallPrim + ExtWallDscrSec + 
+    IntWall + Roof_CoverDscr + high_school + elmtr_school + hsch_distance + 
+    city + GEOID + parkCount + LNcrime_nn1 + LNcrime_nn2 + LNcrime_nn3 + 
+    LNcrime_nn4 + LNcrime_nn5 + in_hist*BoulderCity + LNtrailheadCount, 
+    data = st_drop_geometry(sale.training),
+    method = "lm", trControl = fitControl, na.action = na.pass)
+
+reg.cv.6
+reg.cv.6$resample[1:5,]
+```
+### model 5 - add elmtr_distance
+```{r}
+reg.training.5 <- lm(LNprice ~ year_quarter + bld_num + section_num + designCode + 
+    qualityCodeDscr + ConstCode + builtYear + CompCode + EffectiveYear + 
+    LNbsmtSF + bsmtType + carStorageSF + nbrBedRoom + nbrRoomsNobath + 
+    LNmainfloorSF + LNnbrThreeQtrBaths + LNnbrFullBaths + LNnbrHalfBaths + 
+    LNTotalFinishedSF + AcDscr + Heating + ExtWallPrim + ExtWallDscrSec + 
+    IntWall + Roof_CoverDscr + high_school + elmtr_school + hsch_distance + 
+    city + GEOID + parkCount + LNcrime_nn1 + LNcrime_nn2 + LNcrime_nn3 + 
+    LNcrime_nn4 + LNcrime_nn5 + in_hist*BoulderCity + LNtrailheadCount + elmtr_distance, 
+    data = st_drop_geometry(sale.training))
+
+summary(reg.training.5)
+```
+```{r}
+#MAPE
+
+reg.test5 <-
+  sale.test %>%
+  mutate(price.Predict = exp(predict(reg.training.5, sale.test))-1,
+         price.Error = price.Predict - price,
+         price.AbsError = abs(price.Predict - price),
+         price.APE = (abs(price.Predict - price)) / price.Predict)
+
+mean(reg.test5$price.AbsError, na.rm = T)
+mean(reg.test5$price.APE, na.rm = T)
+
+```
+
+```{r}
+# cross-validation
+reg.cv.5 <- 
+  train(LNprice ~ year_quarter + bld_num + section_num + designCode + 
+    qualityCodeDscr + ConstCode + builtYear + CompCode + EffectiveYear + 
+    LNbsmtSF + bsmtType + carStorageSF + nbrBedRoom + nbrRoomsNobath + 
+    LNmainfloorSF + LNnbrThreeQtrBaths + LNnbrFullBaths + LNnbrHalfBaths + 
+    LNTotalFinishedSF + AcDscr + Heating + ExtWallPrim + ExtWallDscrSec + 
+    IntWall + Roof_CoverDscr + high_school + elmtr_school + hsch_distance + 
+    city + GEOID + parkCount + LNcrime_nn1 + LNcrime_nn2 + LNcrime_nn3 + 
+    LNcrime_nn4 + LNcrime_nn5 + in_hist*BoulderCity + LNtrailheadCount + elmtr_distance,
+    data = st_drop_geometry(sale.training),
+    method = "lm", trControl = fitControl, na.action = na.pass)
+
+reg.cv.5
+reg.cv.5$resample[1:5,]
+```
 
 **log**
-
-# Regression
-
-# Cross-Validation
-
-
+```{r, fig.heihgt=20, fig.width=20}
+ggpairs(select_if(st_drop_geometry(sale.final %>% dplyr::select(price, year_quarter , section_num , designCode , qualityCodeDscr , ConstCode , ConstCodeDscr , builtYear , CompCode , EffectiveYear , bsmtSF , bsmtType , carStorageType , mainfloorSF , nbrThreeQtrBaths , nbrFullBaths , nbrHalfBaths , TotalFinishedSF , AcDscr , HeatingDscr , ExtWallDscrPrim , ExtWallDscrSec , Roof_CoverDscr , high_school , elmtr_school , city , GEOID , crime_nn1 , crime_nn3 , crime_nn4 , in_hist , trailheadCount)), is.numeric) %>% na.omit(),lower= list(continuous = wrap("points", shape = I('.'))),upper = list(combo = wrap("box", outlier.shape = I('.'))))
+```
 
 
