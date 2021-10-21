@@ -667,6 +667,10 @@ sale.final <- left_join(
 
 
 ## More Feature Engineering: Log transformation
+check correlation and variables' distribution
+```{r, fig.heihgt=20, fig.width=20}
+ggpairs(select_if(st_drop_geometry(sale.final %>% dplyr::select(price, year_quarter , section_num , designCode , qualityCodeDscr , ConstCode , ConstCodeDscr , builtYear , CompCode , EffectiveYear , bsmtSF , bsmtType , carStorageType , mainfloorSF , nbrThreeQtrBaths , nbrFullBaths , nbrHalfBaths , TotalFinishedSF , AcDscr , HeatingDscr , ExtWallDscrPrim , ExtWallDscrSec , Roof_CoverDscr , high_school , elmtr_school , city , GEOID , crime_nn1 , crime_nn3 , crime_nn4 , in_hist , trailheadCount)), is.numeric) %>% na.omit(),lower= list(continuous = wrap("points", shape = I('.'))),upper = list(combo = wrap("box", outlier.shape = I('.'))))
+```
 log transform
 ```{r}
 sale.final$price[is.na(sale.final$price)] <- 0
@@ -741,9 +745,11 @@ ggcorrplot(
 toModel.1 <- sale.final %>% 
   filter(toPredict == 0)
 
-inTrain <- createDataPartition(
-              y = paste(toModel.1$quallifyCode,toModel.1$elmtr_school,toModel.1$mainfloorSF,toModel.1$HeatingDscr),
-              p = .75, list = FALSE)
+
+
+#inTrain <- createDataPartition(
+#              y = paste(toModel.1$quallifyCode,toModel.1$elmtr_school,toModel.1$mainfloorSF,toModel.1$HeatingDscr),
+#              p = .75, list = FALSE)
 sale.training <- toModel.1[inTrain,] 
 sale.test <- toModel.1[-inTrain,]  
 ```
@@ -866,6 +872,10 @@ mean(reg.test6$price.APE, na.rm = T)
 ```
 
 ```{r}
+
+fitControl <- trainControl(method = "cv", number = 100)
+set.seed(825)
+
 # cross-validation
 reg.cv.6 <- 
   train(LNprice ~ year_quarter + bld_num + section_num + designCode + 
@@ -882,7 +892,7 @@ reg.cv.6 <-
 reg.cv.6
 reg.cv.6$resample[1:5,]
 ```
-### model 5 - add elmtr_distance
+### model 5 - add elmtr_distance to model 6
 ```{r}
 reg.training.5 <- lm(LNprice ~ year_quarter + bld_num + section_num + designCode + 
     qualityCodeDscr + ConstCode + builtYear + CompCode + EffectiveYear + 
@@ -929,9 +939,95 @@ reg.cv.5
 reg.cv.5$resample[1:5,]
 ```
 
-**log**
-```{r, fig.heihgt=20, fig.width=20}
-ggpairs(select_if(st_drop_geometry(sale.final %>% dplyr::select(price, year_quarter , section_num , designCode , qualityCodeDscr , ConstCode , ConstCodeDscr , builtYear , CompCode , EffectiveYear , bsmtSF , bsmtType , carStorageType , mainfloorSF , nbrThreeQtrBaths , nbrFullBaths , nbrHalfBaths , TotalFinishedSF , AcDscr , HeatingDscr , ExtWallDscrPrim , ExtWallDscrSec , Roof_CoverDscr , high_school , elmtr_school , city , GEOID , crime_nn1 , crime_nn3 , crime_nn4 , in_hist , trailheadCount)), is.numeric) %>% na.omit(),lower= list(continuous = wrap("points", shape = I('.'))),upper = list(combo = wrap("box", outlier.shape = I('.'))))
+### model 2 -add median price to model 6
+```{r}
+#create lagPrice
+coords <- st_coordinates(sale.final) 
+
+neighborList <- knn2nb(knearneigh(coords, 10))
+
+spatialWeights <- nb2listw(neighborList, style="W")
+
+sale.final.lag <- sale.final
+
+sale.final.lag$LNlagPrice <- lag.listw(spatialWeights, sale.final.lag$LNprice)
+
+toModel.lag <- sale.final.lag %>% 
+  filter(toPredict == 0)
+#inTrain.2 <- createDataPartition(
+#              y = paste(toModel.lag$GEOID,toModel.lag$elmtr_school,toModel.lag$TotalFinishedSF, #toModel.lag$section_num,toModel.lag$ExtWallPrim, toModel.lag$Heating),
+#              p = .75, list = FALSE)
+sale.training.lag <- toModel.lag[inTrain.2,] 
+sale.test.lag <- toModel.lag[-inTrain.2,]  
+
+
+reg.training.2 <- lm(LNprice ~ year_quarter + bld_num + section_num + designCode + 
+    qualityCodeDscr + ConstCode + builtYear + CompCode + EffectiveYear + 
+    LNbsmtSF + bsmtType + carStorageSF + nbrBedRoom + nbrRoomsNobath + 
+    LNmainfloorSF + LNnbrThreeQtrBaths + LNnbrFullBaths + LNnbrHalfBaths + 
+    LNTotalFinishedSF + AcDscr + Heating + ExtWallPrim + ExtWallDscrSec + 
+    IntWall + Roof_CoverDscr + high_school + elmtr_school + hsch_distance + 
+    city + GEOID + parkCount + LNcrime_nn1 + LNcrime_nn2 + LNcrime_nn3 + 
+    LNcrime_nn4 + LNcrime_nn5 + in_hist*BoulderCity + LNtrailheadCount + LNlagPrice, 
+    data = st_drop_geometry(sale.training.lag))
+
+summary(reg.training.2)
+```
+
+
+```{r}
+#MAPE
+
+reg.test2 <-
+  sale.test.lag %>%
+  mutate(price.Predict = exp(predict(reg.training.2, sale.test.lag))-1,
+         price.Error = price.Predict - price,
+         price.AbsError = abs(price.Predict - price),
+         price.APE = (abs(price.Predict - price)) / price.Predict)
+
+
+mean(reg.test2$price.AbsError, na.rm = T)
+mean(reg.test2$price.APE, na.rm = T)
+
+```
+
+```{r}
+# cross-validation
+reg.cv.2 <- 
+  train(LNprice ~ year_quarter + bld_num + section_num + designCode + 
+    qualityCodeDscr + ConstCode + builtYear + CompCode + EffectiveYear + 
+    LNbsmtSF + bsmtType + carStorageSF + nbrBedRoom + nbrRoomsNobath + 
+    LNmainfloorSF + LNnbrThreeQtrBaths + LNnbrFullBaths + LNnbrHalfBaths + 
+    LNTotalFinishedSF + AcDscr + Heating + ExtWallPrim + ExtWallDscrSec + 
+    IntWall + Roof_CoverDscr + high_school + elmtr_school + hsch_distance + 
+    city + GEOID + parkCount + LNcrime_nn1 + LNcrime_nn2 + LNcrime_nn3 + 
+    LNcrime_nn4 + LNcrime_nn5 + in_hist*BoulderCity + LNtrailheadCount + LNlagPrice, 
+    data = st_drop_geometry(sale.training.lag),
+    method = "lm", trControl = fitControl, na.action = na.pass)
+
+reg.cv.2
+reg.cv.2$resample[1:5,]
+```
+### to predict
+
+
+
+
+
+
+```{r}
+toPredict <- sale.final.lag %>% 
+  filter(toPredict == 1)
+
+toPredict <-
+  toPredict %>%
+  dplyr::select(-price) %>% 
+  cbind(
+          data.frame(price = exp(predict(reg.training.2, toPredict))-1)
+  ) %>% 
+  dplyr::select(MUSA_ID, price)
+
+#write.csv(toPredict,file="prediction.csv",quote=F,row.names = F)
 ```
 
 
